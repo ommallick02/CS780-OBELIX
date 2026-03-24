@@ -3,7 +3,7 @@
 Run locally to create weights.pth, then submit agent.py + weights.pth.
 
 Example:
-  python train_d3qn_per.py --obelix_py ./obelix.py --out weights.pth --episodes 2000 --difficulty 0 --wall_obstacles
+python train_d3qn_per.py --obelix_py ./obelix.py --out weights.pth --episodes 2000 --difficulty 2 --wall_obstacles
 
             ALGORITHM: DUELING DOUBLE DQN + PRIORITIZED EXPERIENCE REPLAY (D3QN-PER)
 
