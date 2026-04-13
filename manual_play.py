@@ -28,7 +28,7 @@ if __name__ == "__main__":
         "--difficulty",
         help="difficulty level: 0=static, 2=blinking box, 3=moving+blinking",
         type=int,
-        default=0,
+        default=3,
     )
     parser.add_argument(
         "--box_speed",
