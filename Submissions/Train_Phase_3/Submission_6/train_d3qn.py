@@ -3,7 +3,7 @@
 Run locally to create weights.pth, then submit agent.py + weights.pth.
 
 Example:
-python train_d3qn.py --obelix_py ./obelix.py --out weights.pth --episodes 2000 --difficulty 2 --wall_obstacles
+python train_d3qn.py --obelix_py ../../../obelix.py --wall_obstacles
 
                     ALGORITHM: DUELING DOUBLE DEEP Q-NETWORK (D3QN)
 
@@ -31,7 +31,7 @@ D3QN combines two independent improvements over vanilla DQN:
 """
 
 from __future__ import annotations
-import argparse, random
+import argparse, copy, random
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque
@@ -113,9 +113,9 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--obelix_py",       type=str,   required=True)
     ap.add_argument("--out",             type=str,   default="weights.pth")
-    ap.add_argument("--episodes",        type=int,   default=2000)
-    ap.add_argument("--max_steps",       type=int,   default=1000)
-    ap.add_argument("--difficulty",      type=int,   default=0)
+    ap.add_argument("--episodes",        type=int,   default=5000)
+    ap.add_argument("--max_steps",       type=int,   default=2000)
+    ap.add_argument("--difficulty",      type=int,   default=3)
     ap.add_argument("--wall_obstacles",  action="store_true")
     ap.add_argument("--box_speed",       type=int,   default=2)
     ap.add_argument("--scaling_factor",  type=int,   default=5)
@@ -147,7 +147,8 @@ def main():
     replay = Replay(args.replay)
     steps  = 0
 
-    recent_returns = deque(maxlen=50)
+    recent_returns  = deque(maxlen=50)
+    best_avg_return = float("-inf")
 
     def eps_by_step(t: int) -> float:
         if t >= args.eps_decay_steps:
@@ -215,17 +216,31 @@ def main():
 
         recent_returns.append(ep_ret)
         avg_return = sum(recent_returns) / len(recent_returns)
-        pbar.set_postfix({
-            "return": f"{ep_ret:>8.1f}",
-            "avg50":  f"{avg_return:>8.1f}",
-            "loss":   f"{last_loss:.4f}",
-            "eps":    f"{eps_by_step(steps):.3f}",
-            "replay": f"{len(replay):>6}",
-        })
+
+        # Save best model immediately when new best is found (overwrite previous)
+        if avg_return > best_avg_return:
+            best_avg_return = avg_return
+            torch.save(q.state_dict(), args.out)
+            pbar.set_postfix({
+                "return": f"{ep_ret:>8.1f}",
+                "avg50":  f"{avg_return:>8.1f}",
+                "loss":   f"{last_loss:.4f}",
+                "eps":    f"{eps_by_step(steps):.3f}",
+                "replay": f"{len(replay):>6}",
+                "saved":  "NEW BEST",
+            })
+        else:
+            pbar.set_postfix({
+                "return": f"{ep_ret:>8.1f}",
+                "avg50":  f"{avg_return:>8.1f}",
+                "loss":   f"{last_loss:.4f}",
+                "eps":    f"{eps_by_step(steps):.3f}",
+                "replay": f"{len(replay):>6}",
+            })
 
     pbar.close()
-    torch.save(q.state_dict(), args.out)
-    print("Saved:", args.out)
+
+    print(f"Training complete. Best model (avg50={best_avg_return:.1f}) saved at: {args.out}")
 
 
 if __name__ == "__main__":

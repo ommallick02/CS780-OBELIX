@@ -3,7 +3,7 @@
 Run locally to create weights.pth, then submit agent.py + weights.pth.
 
 Example:
-python train_ddqn.py --obelix_py ./obelix.py --out weights.pth --episodes 2000 --difficulty 2 --wall_obstacles
+python train_ddqn.py --obelix_py ../../../obelix.py --wall_obstacles
 
                         ALGORITHM: DOUBLE DEEP Q-NETWORK (DDQN)
 
@@ -43,7 +43,7 @@ For More Details please refer to https://arxiv.org/pdf/1509.06461 .
 """
 
 from __future__ import annotations
-import argparse, random
+import argparse, copy, random
 from collections import deque
 from dataclasses import dataclass
 from typing import Deque
@@ -59,14 +59,6 @@ ACTIONS = ["L45", "L22", "FW", "R22", "R45"]
 
 # ── Device selection ──────────────────────────────────────────────────────────
 def get_device() -> torch.device:
-    '''
-    if torch.cuda.is_available():
-        dev = torch.device("cuda")
-    elif torch.backends.mps.is_available():    # Apple Silicon
-        dev = torch.device("mps")
-    else:
-        dev = torch.device("cpu")
-    '''
     return torch.device("cpu")
 
 
@@ -99,7 +91,6 @@ class Replay:
     def sample(self, batch: int, device: torch.device):
         idx   = np.random.choice(len(self.buf), size=batch, replace=False)
         items = [self.buf[i] for i in idx]
-        # Build tensors and move to device in one call
         s  = torch.tensor(np.stack([it.s  for it in items]), dtype=torch.float32, device=device)
         a  = torch.tensor([it.a    for it in items],         dtype=torch.int64,   device=device)
         r  = torch.tensor([it.r    for it in items],         dtype=torch.float32, device=device)
@@ -117,26 +108,26 @@ def import_obelix(obelix_py: str):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--obelix_py", type=str, required=True)
-    ap.add_argument("--out", type=str, default="weights.pth")
-    ap.add_argument("--episodes", type=int, default=2000)
-    ap.add_argument("--max_steps", type=int, default=1000)
-    ap.add_argument("--difficulty", type=int, default=0)
+    ap.add_argument("--obelix_py",      type=str, required=True)
+    ap.add_argument("--out",            type=str, default="weights.pth")
+    ap.add_argument("--episodes",       type=int, default=5000)
+    ap.add_argument("--max_steps",      type=int, default=2000)
+    ap.add_argument("--difficulty",     type=int, default=3)
     ap.add_argument("--wall_obstacles", action="store_true")
-    ap.add_argument("--box_speed", type=int, default=2)
+    ap.add_argument("--box_speed",      type=int, default=2)
     ap.add_argument("--scaling_factor", type=int, default=5)
-    ap.add_argument("--arena_size", type=int, default=500)
+    ap.add_argument("--arena_size",     type=int, default=500)
 
-    ap.add_argument("--gamma", type=float, default=0.99)
-    ap.add_argument("--lr", type=float, default=1e-3)
-    ap.add_argument("--batch", type=int, default=256)
-    ap.add_argument("--replay", type=int, default=100000)
-    ap.add_argument("--warmup", type=int, default=2000)
-    ap.add_argument("--target_sync", type=int, default=2000)
-    ap.add_argument("--eps_start", type=float, default=1.0)
-    ap.add_argument("--eps_end", type=float, default=0.05)
-    ap.add_argument("--eps_decay_steps", type=int, default=200000)
-    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--gamma",          type=float, default=0.99)
+    ap.add_argument("--lr",             type=float, default=1e-3)
+    ap.add_argument("--batch",          type=int, default=256)
+    ap.add_argument("--replay",         type=int, default=100000)
+    ap.add_argument("--warmup",         type=int, default=2000)
+    ap.add_argument("--target_sync",    type=int, default=2000)
+    ap.add_argument("--eps_start",      type=float, default=1.0)
+    ap.add_argument("--eps_end",        type=float, default=0.05)
+    ap.add_argument("--eps_decay_steps",type=int, default=200000)
+    ap.add_argument("--seed",           type=int, default=0)
     args = ap.parse_args()
 
     random.seed(args.seed)
@@ -158,7 +149,8 @@ def main():
     replay = Replay(args.replay)
     steps  = 0
 
-    recent_returns = deque(maxlen=50)
+    recent_returns  = deque(maxlen=50)
+    best_avg_return = float("-inf")
 
     def eps_by_step(t):
         if t >= args.eps_decay_steps:
@@ -224,19 +216,34 @@ def main():
 
         recent_returns.append(ep_ret)
         avg_return = sum(recent_returns) / len(recent_returns)
-        pbar.set_postfix({
-            "return": f"{ep_ret:>8.1f}",
-            "avg50":  f"{avg_return:>8.1f}",
-            "loss":   f"{last_loss:.4f}",
-            "eps":    f"{eps_by_step(steps):.3f}",
-            "replay": f"{len(replay):>6}",
-        })
+
+        # Save best model immediately when new best is found (overwrite previous)
+        if avg_return > best_avg_return:
+            best_avg_return = avg_return
+            # Move to CPU for saving, then back to device
+            best_weights = q.to("cpu").state_dict()
+            torch.save(best_weights, args.out)
+            q.to(device)  # move back after saving
+            pbar.set_postfix({
+                "return": f"{ep_ret:>8.1f}",
+                "avg50":  f"{avg_return:>8.1f}",
+                "loss":   f"{last_loss:.4f}",
+                "eps":    f"{eps_by_step(steps):.3f}",
+                "replay": f"{len(replay):>6}",
+                "saved":  "NEW BEST",
+            })
+        else:
+            pbar.set_postfix({
+                "return": f"{ep_ret:>8.1f}",
+                "avg50":  f"{avg_return:>8.1f}",
+                "loss":   f"{last_loss:.4f}",
+                "eps":    f"{eps_by_step(steps):.3f}",
+                "replay": f"{len(replay):>6}",
+            })
 
     pbar.close()
 
-    # Always save weights on CPU so submission loads cleanly on any machine
-    torch.save(q.to("cpu").state_dict(), args.out)
-    print("Saved:", args.out)
+    print(f"Training complete. Best model (avg50={best_avg_return:.1f}) saved at: {args.out}")
 
 if __name__ == "__main__":
     main()
